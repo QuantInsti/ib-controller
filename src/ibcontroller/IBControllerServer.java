@@ -20,8 +20,13 @@ package ibcontroller;
 
 import java.io.IOException;
 import java.net.InetAddress;
+import java.net.NetworkInterface;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.net.SocketException;
+import java.util.ArrayList;
+import java.util.Enumeration;
+import java.util.List;
 
 class IBControllerServer
         implements Runnable {
@@ -37,23 +42,30 @@ class IBControllerServer
         this.isGateway = isGateway;
     }
 
-    @Override public void run() {
+    @Override
+    public void run() {
         Thread.currentThread().setName("IBControllerServer");
-        Utils.logToConsole("IBControllerServer is started.");
 
-        if (! createSocket()) {
+        final int port = Settings.settings().getInt("IbControllerPort", 0);
+        if (port == 0) {
+            Utils.logToConsole("IBControllerServer is not started because the port is not configured");
             return;
         }
 
-        for (; !mQuitting;) {
-            Socket socket = getClient();
+        Utils.logToConsole("IBControllerServer is starting with port " + port);
 
-            if (socket != null) MyCachedThreadPool.getInstance().execute(new CommandDispatcher(new CommandChannel(socket), isGateway));
-        }
+        if (createSocket(port)) {
+            Utils.logToConsole("IBControllerServer started and is ready to accept commands");
+            for (; !mQuitting;) {
+                Socket socket = getClient();
 
-        try {
-            mSocket.close();
-        } catch (Exception e) {
+                if (socket != null)  MyCachedThreadPool.getInstance().execute(new CommandDispatcher(new CommandChannel(socket), isGateway));
+            }
+
+            try {
+                mSocket.close();
+            } catch (Exception e) {
+            }
         }
 
         Utils.logToConsole("IBControllerServer is shutdown");
@@ -63,27 +75,33 @@ class IBControllerServer
         mQuitting = true;
     }
 
-    private boolean createSocket() {
-        int port = Settings.settings().getInt("IbControllerPort", 7462);
-        int backlog = 5;
-        String bindaddr = null;
+    private boolean createSocket(final int port) {
+        final int backlog = 5;
         try {
-            bindaddr = Settings.settings().getString("IbBindAddress", "");
-            if (bindaddr != null && bindaddr.length() > 0) {
+            final String bindaddr = Settings.settings().getString("IbBindAddress", "");
+            if (!bindaddr.isEmpty()) {
                 mSocket = new ServerSocket(port,
                                             backlog,
                                             InetAddress.getByName(bindaddr));
+                Utils.logToConsole("IBControllerServer listening on address: " +
+                                   bindaddr + " port: " +
+                                   java.lang.String.valueOf(port));
             } else {
-                bindaddr = InetAddress.getLocalHost().toString();
-                mSocket =
-                new ServerSocket(port, backlog, InetAddress.getLocalHost());
+                mSocket = new ServerSocket(port, backlog);
+                Utils.logToConsole("IBControllerServer listening on addresses: " +
+                                   getAddresses() + "; port: " +
+                                   java.lang.String.valueOf(port));
             }
-            Utils.logToConsole("IBControllerServer listening on address: " +
-                               bindaddr + " port: " +
-                               java.lang.String.valueOf(port));
+        } catch (java.net.BindException e) {
+            Utils.logError("IBControllerServer failed to create socket: " + e.getMessage());
+            Utils.logToConsole("IBControllerServer cannot process commands");
+            mSocket = null;
+            mQuitting = true;
+            return false;
         } catch (IOException e) {
             Utils.logError("exception:\n" + e.toString());
             Utils.logToConsole("IBControllerServer failed to create socket");
+            Utils.logToConsole("IBControllerServer cannot process commands");
             mSocket = null;
             mQuitting = true;
             return false;
@@ -92,15 +110,14 @@ class IBControllerServer
     }
 
     private Socket getClient() {
-        Socket socket;
         try {
-            socket = mSocket.accept();
+            final Socket socket = mSocket.accept();
 
-            String allowedAddresses =
+            final String allowedAddresses =
                     Settings.settings().getString("IbControlFrom", "");
 
-            if (!socket.getInetAddress().equals(mSocket.getInetAddress()) &&
-                    !socket.getInetAddress().equals(InetAddress.getLocalHost()) &&
+            if (!socket.getInetAddress().getHostAddress().equals(mSocket.getInetAddress().getHostAddress()) &&
+                    !socket.getInetAddress().getHostAddress().equals(InetAddress.getLoopbackAddress().getHostAddress()) &&
                     !allowedAddresses.contains(socket.getInetAddress().getHostAddress()) &&
                     !allowedAddresses.contains(socket.getInetAddress().getHostName())) {
                 Utils.logToConsole("IBControllerServer denied access to: " +
@@ -109,6 +126,7 @@ class IBControllerServer
                 return null;
             }
 
+            Utils.logToConsole("IBControllerServer accepted connection from: " + socket.getInetAddress().getHostAddress());
             return socket;
         } catch (IOException e) {
             e.printStackTrace();
@@ -117,5 +135,33 @@ class IBControllerServer
             e.printStackTrace();
             return null;
         }
+    }
+    
+    private String getAddresses() {
+        final List<String> addressList = getAddressList();
+        String s = addressList.isEmpty() ? "" : addressList.get(0);
+        for (int i = 1; i < addressList.size(); i++) {
+            s = s + "," + addressList.get(i);
+        }
+        return s;
+    }
+    
+    private List<String> getAddressList() {
+        List<String> addressList = new ArrayList<>(); 
+        try {
+            Enumeration<NetworkInterface> interfaces = NetworkInterface.getNetworkInterfaces();
+            while (interfaces.hasMoreElements()) {
+                NetworkInterface iface = interfaces.nextElement();
+
+                Enumeration<InetAddress> addresses = iface.getInetAddresses();
+                while(addresses.hasMoreElements()) {
+                    InetAddress address = addresses.nextElement();
+                    addressList.add(address.getHostAddress());
+                }
+            }
+        } catch (SocketException e) {
+            Utils.logToConsole("SocketException occurred while enumerating network interfaces");
+        }
+        return addressList;
     }
 }

@@ -4,6 +4,11 @@
 #                                                                             +
 #   This command file starts the Interactive Brokers' Gateway.                +
 #                                                                             +
+#   If you run it without any arguments it will display a new window showing  +
+#   useful information and then start the Gateway. If you supply -inline as   +
+#   the first argument, the information will be displayed in the current      +
+#   terminal window.                                                          +
+#                                                                             +
 #   The following lines are the only ones you may need to change, and you     +
 #   probably only need to change the first one.                               +
 #                                                                             +
@@ -13,7 +18,7 @@
 #=============================================================================+
 
 
-TWS_MAJOR_VRSN=952
+TWS_MAJOR_VRSN=963
 IBC_INI=~/IBController/IBController.ini
 TRADING_MODE=
 IBC_PATH=/opt/IBController
@@ -24,6 +29,7 @@ TWSPASSWORD=
 FIXUSERID=
 FIXPASSWORD=
 JAVA_PATH=
+HIDE=
 
 
 #              PLEASE DON'T CHANGE ANYTHING BELOW THIS LINE !!
@@ -125,6 +131,16 @@ JAVA_PATH=
 #     without a very good reason.
 
 
+#   HIDE
+#
+#     If set to YES or TRUE, the diagnostic window that contains information 
+#     about the running TWS, and where to find the log file, will be iconified. 
+#     If not set, or set to any other value, the window will be displayed. 
+#     Values are not case-sensitive so for example yEs and yes are interpeted 
+#     as YES. (Note that when the -inline argument is supplied, this setting 
+#     has no effect.)
+
+
 #   End of Notes:
 #==============================================================================
 
@@ -145,5 +161,14 @@ export FIXPASSWORD
 export JAVA_PATH
 export APP
 
-"${IBC_PATH}/Scripts/DisplayBannerAndLaunch.sh" &
+hide="$(echo ${HIDE} | tr '[:lower:]' '[:upper:]')"
+if [[ "$hide" = "YES" || "$hide" = "TRUE" ]]; then 
+	iconic=-iconic
+fi
 
+if [[ "$1" == "-inline" ]]; then
+    exec "${IBC_PATH}/Scripts/DisplayBannerAndLaunch.sh"
+else
+    title="IBController ($APP $TWS_MAJOR_VRSN)"
+    xterm $iconic -T "$title" -e "${IBC_PATH}/Scripts/DisplayBannerAndLaunch.sh" &
+fi

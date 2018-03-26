@@ -1,6 +1,13 @@
+#!/bin/bash
+
 #=============================================================================+
 #                                                                             +
 #   This command file starts the Interactive Brokers' Trader Workstation.     +
+#                                                                             +
+#   If you run it without any arguments it will display a new window showing  +
+#   useful information and then start the Gateway. If you supply -inline as   +
+#   the first argument, the information will be displayed in the current      +
+#   terminal window.                                                          +
 #                                                                             +
 #   The following lines are the only ones you may need to change, and you     +
 #   probably only need to change the first one.                               +
@@ -124,6 +131,7 @@ APP=TWS
 
 export TWS_MAJOR_VRSN
 export IBC_INI
+export TRADING_MODE
 export IBC_PATH
 export TWS_PATH
 export TWS_CONFIG_PATH
@@ -131,7 +139,12 @@ export LOG_PATH
 export TWSUSERID
 export TWSPASSWORD
 export JAVA_PATH
-export MODE
+export APP
 
-"${IBC_PATH}/Scripts/DisplayBannerAndLaunch.sh" &
-
+if [[ "$1" == "-inline" ]]; then
+    exec "${IBC_PATH}/Scripts/DisplayBannerAndLaunch.sh"
+else
+    osascript -e 'tell app "Terminal"
+        do script "${IBC_PATH}/Scripts/DisplayBannerAndLaunch.sh"
+    end tell'
+fi

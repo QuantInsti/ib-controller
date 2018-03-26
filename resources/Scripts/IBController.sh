@@ -66,12 +66,20 @@ fi
 error_exit() {
 	error_number=$1
 	error_message=$2
+	error_message1=$3
+	error_message2=$4
 	>&2 echo
 	>&2 echo =========================== An error has occurred =============================
 	>&2 echo
 	>&2 echo
 	>&2 echo
 	>&2 echo -e "Error: ${error_message}"
+	if [[ -n "${error_message1}" ]]; then
+		>&2 echo -e "       ${error_message1}"
+	fi
+	if [[ -n "${error_message2}" ]]; then
+		>&2 echo -e "       ${error_message2}"
+	fi
 	>&2 exit "${error_number}"
 }
 
@@ -153,7 +161,7 @@ fi
 echo
 echo -e "================================================================================"
 echo
-echo -e "Starting IBController version ${IBC_VRSN} on $(date -I) at $(date +%T)"
+echo -e "Starting IBController version ${IBC_VRSN} on $(date +"%Y-%m-%d") at $(date +%T)"
 echo
 echo -e "Operating system: $(uname -a)"
 echo
@@ -211,7 +219,7 @@ if [ "$ibc_ini" = "" ]; then ibc_ini=~/IBController/IBController.ini ;fi
 if [[ "$os" = "$OS_LINUX" ]]; then
 	tws_vmoptions="${tws_settings_path}/${tws_version}/tws.vmoptions"
 	tws_jars="${tws_path}/${tws_version}/jars"
-	tws_install4j="${tws_path}/ibgateway/${tws_version}/.install4j"
+	tws_install4j="${tws_path}/${tws_version}/.install4j"
 
 	gateway_vmoptions="${tws_settings_path}/ibgateway/${tws_version}/ibgateway.vmoptions" 
 	gateway_jars="${tws_path}/ibgateway/${tws_version}/jars"
@@ -219,9 +227,11 @@ if [[ "$os" = "$OS_LINUX" ]]; then
 elif [[ "$os" = "$OS_OSX" ]]; then
 	tws_vmoptions="${tws_settings_path}/tws-${tws_version}.vmoptions"
 	tws_jars="${tws_path}/Trader Workstation ${tws_version}/jars"
+	tws_install4j="${tws_path}/Trader Workstation ${tws_version}/.install4j"
 
 	gateway_vmoptions="${tws_settings_path}/ibgateway-${tws_version}.vmoptions" 
 	gateway_jars="${tws_path}/IB Gateway ${tws_version}/jars"
+	gateway_install4j="${tws_path}/IB Gateway ${tws_version}/.install4j"
 fi
 
 if [[ "${entry_point}" = "${ENTRY_POINT_TWS}" ]]; then
@@ -256,7 +266,9 @@ if [[ "${entry_point}" = "${ENTRY_POINT_GATEWAY}" ]]; then
 fi
 
 if [[ ! -e "$jars" ]]; then
-	error_exit $E_TWS_VERSION_NOT_INSTALLED "TWS version $tws_version is not installed: can't find $jars"
+	error_exit $E_TWS_VERSION_NOT_INSTALLED "TWS version $tws_version is not installed: can't find $jars" \
+	                                        "You must install the offline version of TWS/Gateway" \
+                                            "IBController does not work with the auto-updating TWS/Gateway"
 fi
 
 if [[ ! -e  "$ibc_path" ]]; then
@@ -334,16 +346,17 @@ function read_from_config {
 }
 
 if [[ "$os" = "$OS_LINUX" ]]; then
-	tws_installer="$tws_path/$tws_version/.install4j"
 	if [[ ! -n "$java_path" ]]; then
-		java_path=$(read_from_config "$tws_installer/pref_jre.cfg")
+		java_path=$(read_from_config "$install4j/pref_jre.cfg")
 	fi
 	if [[ ! -n "$java_path" ]]; then
-		java_path=$(read_from_config "$tws_installer/inst_jre.cfg")
+		java_path=$(read_from_config "$install4j/inst_jre.cfg")
 	fi
+elif [[ "$os" = "$OS_OSX" ]]; then
+	java_path="$install4j/jre.bundle/Contents/Home/jre/bin"
 fi
 
-# alternatively use installed java, if its from oracle (openJDK causes problems with TWS)
+# alternatively use installed java, if it's from oracle (openJDK causes problems with TWS)
 if [[ ! -n "$java_path" ]]; then
 	if type -p java > /dev/null; then
 		echo Found java executable in PATH
@@ -390,7 +403,7 @@ else
 	program=IBGateway
 fi
 echo "Starting $program with this command:"
-echo -e "$java_path/java -cp $ibc_classpath $java_vm_options $entry_point $ibc_ini $hidden_credentials ${mode}" 
+echo -e "\"$java_path/java\" -cp \"$ibc_classpath\" $java_vm_options $entry_point \"$ibc_ini\" $hidden_credentials ${mode}"
 echo
 
 # prevent other Java tools interfering with IBController
@@ -398,15 +411,23 @@ JAVA_TOOL_OPTIONS=
 
 pushd "$tws_path" > /dev/null
 
+# forward signals (see https://veithen.github.io/2014/11/16/sigterm-propagation.html)
+trap 'kill -TERM $PID' TERM INT
+
 if [[ -n $got_fix_credentials && -n $got_api_credentials ]]; then
-	"$java_path/java" -cp "$ibc_classpath" $java_vm_options $entry_point "$ibc_ini" "$fix_user_id" "$fix_password" "$ib_user_id" "$ib_password" ${mode}
+	"$java_path/java" -cp "$ibc_classpath" $java_vm_options $entry_point "$ibc_ini" "$fix_user_id" "$fix_password" "$ib_user_id" "$ib_password" ${mode} &
 elif  [[ -n $got_fix_credentials ]]; then
-	"$java_path/java" -cp "$ibc_classpath" $java_vm_options $entry_point "$ibc_ini" "$fix_user_id" "$fix_password" ${mode}
+	"$java_path/java" -cp "$ibc_classpath" $java_vm_options $entry_point "$ibc_ini" "$fix_user_id" "$fix_password" ${mode} &
 elif [[ -n $got_api_credentials ]]; then
-	"$java_path/java" -cp "$ibc_classpath" $java_vm_options $entry_point "$ibc_ini" "$ib_user_id" "$ib_password" ${mode}
+	"$java_path/java" -cp "$ibc_classpath" $java_vm_options $entry_point "$ibc_ini" "$ib_user_id" "$ib_password" ${mode} &
 else
-	"$java_path/java" -cp "$ibc_classpath" $java_vm_options $entry_point "$ibc_ini" ${mode}
+	"$java_path/java" -cp "$ibc_classpath" $java_vm_options $entry_point "$ibc_ini" ${mode} &
 fi
+
+PID=$!
+wait $PID
+trap - TERM INT
+wait $PID
 
 exit_code=$?
 echo "$program finished"

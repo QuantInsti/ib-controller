@@ -20,13 +20,11 @@ package ibcontroller;
 
 import java.awt.AWTEvent;
 import java.awt.Toolkit;
-import java.io.BufferedReader;
-import java.io.BufferedWriter;
 import java.io.File;
-import java.io.FileNotFoundException;
-import java.io.FileReader;
-import java.io.FileWriter;
 import java.io.IOException;
+import java.nio.file.FileAlreadyExistsException;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.text.SimpleDateFormat;
 import java.text.ParseException;
 import java.util.ArrayList;
@@ -36,9 +34,6 @@ import java.util.Enumeration;
 import java.util.List;
 import java.util.Properties;
 import java.util.concurrent.TimeUnit;
-import javax.imageio.IIOException;
-import javax.transaction.InvalidTransactionException;
-
 
 /**
  * @author stevek
@@ -229,7 +224,7 @@ public class IBController {
         setupDefaultEnvironment(args, false);
         load();
     }
-    
+
     static void setupDefaultEnvironment(final String[] args, final boolean isGateway) throws Exception {
         Settings.initialise(new DefaultSettings(args));
         LoginManager.initialise(new DefaultLoginManager(args));
@@ -240,31 +235,31 @@ public class IBController {
     static void checkArguments(String[] args) {
         /**
          * Allowable parameter combinations:
-         * 
+         *
          * 1. No parameters
-         * 
+         *
          * 2. ENCRYPT <password>
-         * 
+         *
          * 3. <iniFile> [<tradingMode>]
-         * 
+         *
          * 4. <iniFile> <apiUserName> <apiPassword> [<tradingMode>]
-         * 
+         *
          * 5. <iniFile> <fixUserName> <fixPassword> <apiUserName> <apiPassword> [<tradingMode>]
-         * 
+         *
          * where:
-         * 
-         *      <iniFile>       ::= NULL | path-and-filename-of-.ini-file 
-         * 
+         *
+         *      <iniFile>       ::= NULL | path-and-filename-of-.ini-file
+         *
          *      <tradingMode>   ::= blank | LIVETRADING | PAPERTRADING
-         * 
+         *
          *      <apiUserName>   ::= blank | username-for-TWS
-         * 
+         *
          *      <apiPassword>   ::= blank | password-for-TWS
-         * 
+         *
          *      <fixUserName>   ::= blank | username-for-FIX-CTCI-Gateway
-         * 
+         *
          *      <fixPassword>   ::= blank | password-for-FIX-CTCI-Gateway
-         * 
+         *
          */
         if (args.length == 2) {
             if (args[0].equalsIgnoreCase("encrypt")) {
@@ -288,21 +283,21 @@ public class IBController {
 
     public static void load() {
         printProperties();
-        
+
         Settings.settings().logDiagnosticMessage();
         LoginManager.loginManager().logDiagnosticMessage();
         MainWindowManager.mainWindowManager().logDiagnosticMessage();
         TradingModeManager.tradingModeManager().logDiagnosticMessage();
         ConfigDialogManager.configDialogManager().logDiagnosticMessage();
-        
+
         boolean isGateway = MainWindowManager.mainWindowManager().isGateway();
-        
+
         startIBControllerServer(isGateway);
 
         startShutdownTimerIfRequired(isGateway);
 
         createToolkitListener();
-        
+
         startSavingTwsSettingsAutomatically();
 
         startTwsOrGateway(isGateway);
@@ -336,10 +331,11 @@ public class IBController {
         windowHandlers.add(new SecurityCodeDialogHandler());
         windowHandlers.add(new ReloginDialogHandler());
         windowHandlers.add(new NonBrokerageAccountDialogHandler());
-        
+        windowHandlers.add(new ExitConfirmationDialogHandler());
+
         return windowHandlers;
     }
-    
+
     private static Date getShutdownTime() {
         String shutdownTimeSetting = Settings.settings().getString("ClosedownAt", "");
         if (shutdownTimeSetting.length() == 0) {
@@ -372,8 +368,22 @@ public class IBController {
         }
     }
 
+    private static String getJtsIniFilePath() {
+        return getTWSSettingsDirectory() + File.separatorChar + "jts.ini";
+    }
+
     private static String getTWSSettingsDirectory() {
-        return Settings.settings().getString("IbDir", System.getProperty("user.dir"));
+        String path = Settings.settings().getString("IbDir", System.getProperty("user.dir"));
+        try {
+            Files.createDirectories(Paths.get(path));
+        } catch (FileAlreadyExistsException ex) {
+            Utils.logError("Failed to create TWS settings directory at: " + path + "; a file of that name already exists");
+            System.exit(1);
+        } catch (IOException ex) {
+            Utils.logException(ex);
+            System.exit(1);
+        }
+        return path;
     }
 
     private static void printProperties() {
@@ -391,7 +401,6 @@ public class IBController {
     private static void startGateway() {
         String[] twsArgs = new String[1];
         twsArgs[0] = getTWSSettingsDirectory();
-        Utils.logToConsole("TWS settings directory is " + twsArgs[0]);
         try {
             ibgateway.GWClient.main(twsArgs);
         } catch (Throwable t) {
@@ -422,13 +431,11 @@ public class IBController {
     }
 
     private static void startTws() {
-        ensureJtsIniExists();
         if (Settings.settings().getBoolean("ShowAllTrades", false)) {
             Utils.showTradesLogWindow();
         }
         String[] twsArgs = new String[1];
         twsArgs[0] = getTWSSettingsDirectory();
-        Utils.logToConsole("TWS settings directory is " + twsArgs[0]);
         try {
             jclient.LoginFrame.main(twsArgs);
         } catch (Throwable t) {
@@ -437,109 +444,11 @@ public class IBController {
             System.exit(1);
         }
     }
-    
-    private static void ensureJtsIniExists() {
-        /* when TWS starts, there must exist a jts.ini file in the TWS settings directory 
-        *  containing at least the following minimum contents:
-        *
-        * [Logon]
-        * s3store=true
-        *
-        * If this file doesn't exist, or doesn't contain these lines, then TWS won't 
-        * include the 'Store settings on server' checkbox in the login dialog, which
-        * prevents IBController properly handling the StoreSettingsOnServer ini file
-        * option.
-        * 
-        * Note that this is not a problem for the Gateway, which doesn't provide the 
-        * option to store the settings on the server.
-        *
-        */
-        File jtsIniFile = getJtsIniFile();
-        if (jtsIniFile.isFile()) {
-            updateExistingJtsIniFile(jtsIniFile);
-        } else {
-            createMinimalJtsIniFile(jtsIniFile);
-        }
-    }
-    
-    private static File getJtsIniFile() {
-        String jtsIniPath = getTWSSettingsDirectory() + File.separatorChar + "jts.ini";
-        File jtsIniFile = new File(jtsIniPath);
-        if (jtsIniFile.isDirectory()) {
-            Utils.logError(jtsIniPath + " already exists but is a directory");
-            System.exit(1);
-        }
-        return jtsIniFile;
-    }
-    
-    private static void updateExistingJtsIniFile(File jtsIniFile) {
-        Utils.logToConsole("Ensuring " + jtsIniFile.getPath() + " contains s3store=true");
-
-        List<String> lines = getJtsIniFileLines(jtsIniFile);
-        jtsIniFile.delete();
-        rewriteExistingJtsIniFileLines(jtsIniFile, lines);
-    }
-    
-    private static List<String> getJtsIniFileLines (File jtsIniFile) {
-        List<String> lines = new ArrayList<>();
-
-        try (BufferedReader r = new BufferedReader(new FileReader(jtsIniFile))) {
-            String line;
-            while ((line = r.readLine()) != null) {
-                lines.add(line);
-            }
-        } catch (IOException e) {
-            Utils.logError("Unexpected IOException on " + jtsIniFile + ": " + e.getMessage());
-            System.exit(1);
-        }
-        return lines;
-    }
-    
-    private static void createMinimalJtsIniFile(File jtsIniFile) {
-        Utils.logToConsole("Creating minimal " + jtsIniFile.getPath());
-        try (BufferedWriter w = new BufferedWriter(new FileWriter(jtsIniFile))) {
-            writeRequiredJtsIniFileLines(w, jtsIniFile);
-        } catch (IOException e) {
-            Utils.logError("Problem creating " + jtsIniFile.getPath() + ": " + e.getMessage());
-            System.exit(1);
-        }
-    }
-    
-    private static void writeRequiredJtsIniFileLines(BufferedWriter w, File jtsIniFile) {
-        Utils.logToConsole("Writing required lines to "  + jtsIniFile.getPath());
-        try {
-            w.write("[Logon]");
-            w.newLine();
-            w.write("s3store=true");
-            w.newLine();
-        } catch (IOException e) {
-            Utils.logError("Problem writing to " + jtsIniFile.getPath() + ": " + e.getMessage());
-            System.exit(1);
-        }
-    }
-    
-    private static void rewriteExistingJtsIniFileLines(File jtsIniFile, List<String> lines) {
-        boolean foundLogon = false;
-        try (BufferedWriter w = new BufferedWriter(new FileWriter(jtsIniFile))) {
-            for (String l:lines) {
-                if (l.compareTo("[Logon]") == 0) {
-                    foundLogon = true;
-                    writeRequiredJtsIniFileLines(w, jtsIniFile);
-                } else if (l.compareTo("s3store=true") != 0) {
-                    w.write(l);
-                    w.newLine();
-                }
-            }
-            if (! foundLogon) {
-                writeRequiredJtsIniFileLines(w, jtsIniFile);
-            }
-        } catch (IOException e){
-            Utils.logError("Problem writing to " + jtsIniFile.getPath() + ": " + e.getMessage());
-            System.exit(1);
-        }
-    }
 
     private static void startTwsOrGateway(boolean isGateway) {
+        Utils.logToConsole("TWS Settings directory is: " + getTWSSettingsDirectory());
+        JtsIniManager.initialise(getJtsIniFilePath());
+        JtsIniManager.ensureValidJtsIniFile();
         if (isGateway) {
             startGateway();
         } else {
@@ -547,6 +456,8 @@ public class IBController {
         }
 
         int portNumber = Settings.settings().getInt("ForceTwsApiPort", 0);
+        if (portNumber != 0) (new ConfigurationTask(new ConfigureTwsApiPortTask(portNumber))).executeAsync();
+
         boolean readOnlyApi = Settings.settings().getBoolean("ReadOnlyAPI", false);
         MyCachedThreadPool.getInstance().execute(new ConfigureApiSettingTask(isGateway, portNumber, readOnlyApi));
 
