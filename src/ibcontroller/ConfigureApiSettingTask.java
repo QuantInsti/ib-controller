@@ -60,7 +60,7 @@ class ConfigureApiSettingTask implements Runnable {
                             throw new IBControllerException("could not find Enable ActiveX checkbox");
                         }
                         if (cb.isSelected()) {
-                            ConfigDialogManager.configDialogManager().setApiConfigChangeConfirmationExpected(true);
+                            ConfigDialogManager.configDialogManager().setApiConfigChangeConfirmationExpected();
                         }
                     }
                     Utils.logToConsole("TWS API socket port was set to " + tf.getText());
