@@ -1,3 +1,9 @@
+**Important:**
+After customizing the cod, build the new JAR by running the following command:
+```zsh
+TWS=/home/utsav/Jts/ibgateway/963/jars ant jar
+```
+
 **Download the
 [latest official release](https://github.com/ib-controller/ib-controller/releases/latest)
 here**
